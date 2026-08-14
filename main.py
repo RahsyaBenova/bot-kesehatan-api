@@ -1,48 +1,36 @@
 import os
-from flask import Flask, request, jsonify
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 import google.generativeai as genai
 
-app = Flask(__name__)
+app = FastAPI()
 
-# Konfigurasi Gemini API Key dari Environment Variable
+# Ambil API key dari Environment Variables
 genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
 
-# System Prompt Khusus Kesehatan & Safety Disclaimer
-SYSTEM_INSTRUCTION = """
-Anda adalah "MedBot", asisten informasi kesehatan virtual yang ramah dan informatif.
-Aturan Penting:
-1. Anda HANYA memberikan informasi edukasi kesehatan umum dan navigasi awal.
-2. Anda BUKAN dokter dan DILARANG memberikan diagnosis pasti atau meresepkan obat keras.
-3. Selalu ingatkan pengguna untuk berkonsultasi langsung dengan dokter atau fasilitas kesehatan terdekat.
-4. Jika pengguna menyebutkan gejala darurat (nyeri dada hebat, sesak nafas parah, perdarahan hebat, pingsan), SEGERA instruksikan mereka untuk menghubungi layanan darurat (118/119) atau ke IGD terdekat.
-5. Gunakan bahasa Indonesia yang santun, empati, dan mudah dipahami.
+SYSTEM_PROMPT = """
+Anda adalah asisten konsultan informasi kesehatan.
+1. Berikan edukasi dan saran kesehatan umum yang aman.
+2. Ingatkan pengguna bahwa ini bukan diagnosis dokter resmi.
+3. Arahkan ke faskes/IGD jika ada tanda bahaya.
 """
 
 model = genai.GenerativeModel(
     model_name="gemini-1.5-flash",
-    system_instruction=SYSTEM_INSTRUCTION
+    system_instruction=SYSTEM_PROMPT
 )
 
-@app.route("/", methods=["GET"])
-def home():
-    return jsonify({"status": "Bot Konsultasi Kesehatan Aktif"})
+class ChatRequest(BaseModel):
+    message: str
 
-@app.route("/chat", methods=["POST"])
-def chat():
-    data = request.json
-    user_message = data.get("message", "")
+@app.get("/api")
+def root():
+    return {"status": "Bot Kesehatan Aktif"}
 
-    if not user_message:
-        return jsonify({"error": "Pesan tidak boleh kosong"}), 400
-
+@app.post("/api/chat")
+def chat(req: ChatRequest):
     try:
-        response = model.generate_content(user_message)
-        return jsonify({
-            "response": response.text,
-            "disclaimer": "Informasi ini bersifat edukatif dan bukan pengganti diagnosis medis profesional."
-        })
+        res = model.generate_content(req.message)
+        return {"response": res.text}
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+        raise HTTPException(status_code=500, detail=str(e))
