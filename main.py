@@ -1,31 +1,51 @@
 import os
+import re
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import google.generativeai as genai
 
 app = Flask(__name__)
 
-# Konfigurasi CORS agar bisa diakses dari lightenup.id dan mode development
+# Konfigurasi CORS
 CORS(app, origins=[
     "https://lightenup.id",
     "https://www.lightenup.id",
     "http://localhost:3000",
     "http://localhost:8000",
-    "*"  # Gunakan wildcard '*' jika ingin bisa diakses dari preview deployment/testing
+    "*"
 ])
 
-# System Prompt Khusus LightenUp.id
+# System Prompt yang dioptimasi untuk Plain Text bersih (Tanpa simbol Markdown)
 SYSTEM_INSTRUCTION = """
 Anda adalah asisten konsultan kesehatan dan wellness virtual resmi untuk platform "LightenUp.id".
 Karakter Anda: Empati, solutif, ramah, edukatif, dan profesional.
 
-Panduan dan batasan:
-1. Menyapa dan memberikan panduan gaya hidup sehat, manajemen stres, nutrisi, serta informasi kesehatan umum untuk pengguna LightenUp.id.
-2. Anda BUKAN pengganti dokter atau tenaga medis berlisensi; DILARANG memberikan diagnosis mutlak atau meresepkan obat keras.
-3. Selalu ingatkan pengguna untuk berkonsultasi langsung dengan fasilitas kesehatan atau dokter jika keluhan berlanjut.
-4. Jika mendeteksi tanda bahaya/kondisi darurat medis atau krisis psikologis berat, arahkan pengguna segera ke IGD terdekat atau layanan darurat (118/119).
-5. Format jawaban dengan rapi menggunakan poin-poin agar nyaman dibaca di tampilan web/mobile LightenUp.id.
+ATURAN FORMAT PENULISAN (SANGAT PENTING):
+1. JANGAN GUNAKAN SIMBOL MARKDOWN SAMA SEKALI (Dilarang menggunakan tanda bintang ganda **, bintang tunggal *, tanda pagar #, backtick `, atau garis miring _).
+2. Tuliskan jawaban dalam bentuk TEKS BIASA (Plain Text) yang bersih dan mengalir.
+3. Untuk membuat daftar poin atau rincian:
+   - Gunakan nomor biasa (1., 2., 3.) atau tanda strip minus (-) biasa.
+   - Jangan menebalkan judul poin dengan tanda bintang (**). Tulis judul langsung seperti biasa diikuti tanda titik dua (:).
+4. Pisahkan setiap paragraf atau poin dengan jarak satu baris kosong (enter 2 kali) agar tetap rapi dibaca.
+
+PANDUAN MEDIS & KONTEN:
+1. Berikan panduan gaya hidup sehat, manajemen stres, nutrisi, dan info kesehatan umum.
+2. Anda BUKAN pengganti dokter berlisensi; DILARANG memberikan diagnosis mutlak atau meresepkan obat keras.
+3. Selalu ingatkan pengguna untuk berkonsultasi ke fasilitas kesehatan jika keluhan berlanjut.
+4. Jika ada kondisi darurat medis atau krisis berat, arahkan segera ke IGD/faskes terdekat atau hotline 118/119.
 """
+
+def clean_markdown(text: str) -> str:
+    """Failsafe untuk menghapus sisa-sisa simbol markdown jika AI masih memunculkannya."""
+    if not text:
+        return ""
+    # Hapus bold/italic markdown (**text**, *text*, __text__, _text_)
+    text = re.sub(r'[*_]{1,3}(.*?)[*_]{1,3}', r'\1', text)
+    # Hapus heading (### Heading)
+    text = re.sub(r'#+\s*', '', text)
+    # Ganti bullet asterisk (* item) menjadi strip (- item)
+    text = re.sub(r'^\s*\*\s+', '- ', text, flags=re.MULTILINE)
+    return text.strip()
 
 def get_gemini_model():
     """Helper inisialisasi Gemini API"""
@@ -49,19 +69,18 @@ def root():
     return jsonify({
         "status": "success",
         "service": "LightenUp.id Health & Wellness Bot API",
-        "version": "1.0.0"
+        "version": "1.1.0"
     }), 200
 
 
 @app.route('/chat', methods=['POST'])
 @app.route('/api/chat', methods=['POST'])
 def chat():
-    # Validasi body request
     data = request.get_json(silent=True)
     if not data or not isinstance(data, dict):
         return jsonify({
             "status": "error",
-            "message": "Payload JSON tidak valid. Contoh: {\"message\": \"pertanyaan\"}"
+            "message": "Payload JSON tidak valid."
         }), 400
 
     user_message = data.get("message", "").strip()
@@ -71,7 +90,6 @@ def chat():
             "message": "Pesan ('message') tidak boleh kosong."
         }), 400
 
-    # Inisialisasi model
     model, init_error = get_gemini_model()
     if init_error:
         return jsonify({
@@ -79,16 +97,18 @@ def chat():
             "message": init_error
         }), 500
 
-    # Generate jawaban
     try:
         response = model.generate_content(user_message)
-        reply_text = response.text if hasattr(response, 'text') else "Maaf, kami tidak dapat memproses permintaan ini saat ini."
+        raw_text = response.text if hasattr(response, 'text') else ""
+        
+        # Bersihkan sisa format jika ada
+        clean_text = clean_markdown(raw_text)
         
         return jsonify({
             "status": "success",
             "source": "LightenUp.id AI Assistant",
-            "response": reply_text,
-            "disclaimer": "Informasi ini disediakan oleh LightenUp.id untuk tujuan edukasi dan bukan merupakan nasihat atau diagnosis medis profesional."
+            "response": clean_text,
+            "disclaimer": "Informasi ini disediakan oleh LightenUp.id untuk tujuan edukasi dan bukan merupakan diagnosis medis resmi dari dokter."
         }), 200
 
     except Exception as e:
