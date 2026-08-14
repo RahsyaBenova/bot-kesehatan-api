@@ -4,14 +4,13 @@ import google.generativeai as genai
 
 app = Flask(__name__)
 
-# System Prompt Khusus Edukasi Medis & Keamanan
+# Definisikan instruksi sistem untuk LightenUp.id
 SYSTEM_INSTRUCTION = """
-Anda adalah asisten konsultan informasi kesehatan virtual yang empati, ramah, dan profesional.
-Aturan penting:
-1. Berikan edukasi dan saran pertolongan pertama/gaya hidup sehat secara umum.
-2. Anda BUKAN dokter pengganti; jangan memberikan diagnosis mutlak atau meresepkan obat keras.
-3. Selalu sarankan pengguna berkonsultasi langsung dengan dokter jika gejala menetap atau memburuk.
-4. Jika terdapat tanda gawat darurat (sesak napas berat, nyeri dada kiri, pingsan, perdarahan hebat), segera instruksikan untuk ke IGD/faskes terdekat.
+Anda adalah AI asisten kesehatan mental untuk platform LightenUp.id. 
+Tugas Anda adalah mendengarkan dengan empati, memberikan respon yang menenangkan, 
+dan membantu pengguna merefleksikan emosi mereka. 
+Catatan: Anda bukan pengganti psikolog profesional. 
+Jika pengguna menunjukkan tanda bahaya atau melukai diri sendiri, arahkan ke bantuan profesional.
 """
 
 def get_gemini_model():
@@ -22,81 +21,55 @@ def get_gemini_model():
     
     try:
         genai.configure(api_key=api_key)
-        # Inisialisasi model
+        # Rekomendasi 2026: Gunakan "gemini-1.5-flash" (tanpa -latest) untuk stabilitas produksi
         model = genai.GenerativeModel(
-            model_name="gemini-2.5-flash",
+            model_name="gemini-1.5-flash",
             system_instruction=SYSTEM_INSTRUCTION
         )
         return model, None
     except Exception as e:
-        return None, str(e)
+        try:
+            model = genai.GenerativeModel(
+                model_name="gemini-2.5-flash",
+                system_instruction=SYSTEM_INSTRUCTION
+            )
+            return model, None
+        except Exception as err:
+            return None, str(err)
 
-
-# Endpoint Health Check (Root)
-@app.route('/', methods=['GET'])
-def root():
-    return jsonify({
-        "status": "success",
-        "message": "Bot Konsultasi Kesehatan Aktif dan Siap Digunakan."
-    }), 200
-
-
-# Endpoint Konsultasi Chat (POST)
-@app.route('/chat', methods=['POST'])
 @app.route('/api/chat', methods=['POST'])
 def chat():
-    # 1. Validasi Body JSON
-    data = request.get_json(silent=True)
-    if not data or not isinstance(data, dict):
-        return jsonify({
-            "status": "error",
-            "message": "Payload request harus berupa JSON yang valid (contoh: {\"message\": \"pertanyaan Anda\"})."
-        }), 400
-
-    user_message = data.get("message", "").strip()
+    # 1. Ambil pesan dari frontend website
+    data = request.get_json() or {}
+    user_message = data.get("message")
+    chat_history = data.get("history", []) # Opsional: untuk mempertahankan konteks percakapan
+    
     if not user_message:
-        return jsonify({
-            "status": "error",
-            "message": "Field 'message' tidak boleh kosong."
-        }), 400
+        return jsonify({"error": "Pesan tidak boleh kosong"}), 400
 
-    # 2. Inisialisasi Model AI
-    model, init_error = get_gemini_model()
-    if init_error:
-        return jsonify({
-            "status": "error",
-            "message": init_error
-        }), 500
+    # 2. Panggil fungsi model Gemini
+    model, error_msg = get_gemini_model()
+    if error_msg:
+        return jsonify({"error": error_msg}), 500
 
-    # 3. Generate Respon dari Gemini
     try:
-        response = model.generate_content(user_message)
-        
-        # Validasi respon teks
-        reply_text = response.text if hasattr(response, 'text') else "Maaf, AI tidak dapat menghasilkan jawaban untuk permintaan ini."
-        
+        # 3. Kirim pesan ke Gemini
+        # Jika menggunakan chat history, gunakan model.start_chat()
+        if chat_history:
+            chat_session = model.start_chat(history=chat_history)
+            response = chat_session.send_message(user_message)
+        else:
+            response = model.generate_content(user_message)
+            
+        # 4. Kembalikan respon ke frontend
         return jsonify({
-            "status": "success",
-            "response": reply_text,
-            "disclaimer": "Informasi ini bersifat edukatif dan bukan pengganti diagnosis medis resmi dari dokter."
-        }), 200
+            "success": True,
+            "reply": response.text
+        })
 
     except Exception as e:
-        return jsonify({
-            "status": "error",
-            "message": f"Gagal menghasilkan respon: {str(e)}"
-        }), 500
+        return jsonify({"error": f"Gagal memproses pesan: {str(e)}"}), 500
 
-
-# Fallback untuk route yang tidak ditemukan
-@app.errorhandler(404)
-def not_found(e):
-    return jsonify({
-        "status": "error",
-        "message": "Endpoint tidak ditemukan. Gunakan POST /chat atau GET /"
-    }), 404
-
-
-if __name__ == '__main__':
-    # Untuk testing lokal
-    app.run(host='0.0.0.0', port=5000, debug=True)
+# Diperlukan agar Flask bisa berjalan di Vercel Serverless
+def handler(request, client):
+    return app(request)
