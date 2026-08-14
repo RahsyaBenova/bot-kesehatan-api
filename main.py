@@ -24,7 +24,7 @@ def get_gemini_model():
         genai.configure(api_key=api_key)
         # Inisialisasi model
         model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
+            model_name="gemini-2.5-flash",
             system_instruction=SYSTEM_INSTRUCTION
         )
         return model, None
